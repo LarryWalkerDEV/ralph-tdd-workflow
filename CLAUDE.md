@@ -240,6 +240,24 @@ See `scripts/ralph/VALIDATION-FRAMEWORK.md` for detailed test templates.
 
 ---
 
+## Docker Commands
+
+```bash
+# Start dev server in container
+docker compose up dev
+
+# Run all Playwright tests
+docker compose up test
+
+# Run specific story tests
+STORY_ID=US-001 docker compose up test-story
+
+# Shell into container
+docker compose run --rm dev bash
+```
+
+---
+
 ## DO NOT
 
 - Start implementing without activating Ralph: `node .claude/hooks/ralph-guard.js start`

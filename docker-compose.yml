@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Development environment with Node.js and Playwright
+  dev:
+    image: mcr.microsoft.com/playwright:v1.40.0-jammy
+    working_dir: /app
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - KIE_API_KEY=${KIE_API_KEY}
+    command: sh -c "npm install && npm run dev"
+
+  # Run Playwright tests
+  test:
+    image: mcr.microsoft.com/playwright:v1.40.0-jammy
+    working_dir: /app
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    environment:
+      - CI=true
+    command: npx playwright test
+    depends_on:
+      - dev
+
+  # Run specific test file
+  test-story:
+    image: mcr.microsoft.com/playwright:v1.40.0-jammy
+    working_dir: /app
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    environment:
+      - CI=true
+      - STORY_ID=${STORY_ID:-US-001}
+    command: sh -c "npx playwright test e2e/$${STORY_ID}.spec.ts --reporter=list"
+
+volumes:
+  node_modules:
