@@ -1,5 +1,20 @@
 # CLAUDE.md - Ralph TDD Workflow
 
+## Environment Setup
+
+```bash
+# Copy environment template and add your API keys
+cp .env.example .env.local
+```
+
+**Required Environment Variables** (see `.env.local`):
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `KIE_API_KEY` | kie.ai API key for AI services | Yes |
+
+---
+
 ## Quick Start
 
 ```bash
