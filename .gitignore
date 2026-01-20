@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+tools/agent-browser/node_modules/
+
+# Build outputs
+tools/agent-browser/cli/target/
+tools/agent-browser/dist/
+
+# Logs
+*.log
+.claude/hooks/logs/
+
+# Checkpoints (runtime state)
+.claude/checkpoints/
+.claude/current_story
+.claude/current_phase
+.claude/workflow_active
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+test-results/
+playwright-report/
+verification/
+
+# Keep agent-browser binary
+!tools/agent-browser/bin/

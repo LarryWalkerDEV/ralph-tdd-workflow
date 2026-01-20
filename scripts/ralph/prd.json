@@ -1,0 +1,127 @@
+{
+  "project": "Ralph Loop Demo",
+  "version": "2.1",
+  "created": "2024-01-20",
+  "branchName": "ralph/demo-feature",
+  "description": "Example project demonstrating the Ralph TDD workflow",
+  "currentTask": "T001",
+
+  "testUser": {
+    "email": "e2e-test@example.test",
+    "password": "TestPassword123!",
+    "plan": "pro"
+  },
+
+  "decisions": [
+    {
+      "id": "D-001",
+      "decision": "Use TDD approach - tests written before implementation",
+      "rationale": "Prevents test modification to pass failing code",
+      "madeIn": "PRD phase",
+      "date": "2024-01-20"
+    },
+    {
+      "id": "D-002",
+      "decision": "Parallel validation with playwright + browser validators",
+      "rationale": "Catches both functional and visual issues faster",
+      "madeIn": "PRD phase",
+      "date": "2024-01-20"
+    }
+  ],
+
+  "completedTasks": [],
+
+  "tasks": [
+    {
+      "id": "T001",
+      "name": "Contact Form Feature",
+      "status": "pending",
+      "priority": "high",
+      "e2eTestFile": "e2e/t001-contact-form.spec.ts",
+      "stories": [
+        {
+          "id": "US-001",
+          "title": "User can submit contact form",
+          "description": "As a user, I want to submit a contact form, so that I can reach support",
+          "acceptanceCriteria": [
+            "Form displays name, email, message fields",
+            "Name field is required - shows error if empty",
+            "Email field validates format - shows error for invalid email",
+            "Submit button is disabled until form is valid",
+            "Submit triggers POST to /api/contact",
+            "Success message shown after successful submission",
+            "Typecheck passes"
+          ],
+          "priority": 1,
+          "passes": false,
+          "depends_on": [],
+          "test_categories": ["form-validation", "api-integration", "button-action"],
+          "page_path": "/contact",
+          "checkpoints": {
+            "tests_written": false,
+            "build_complete": false,
+            "playwright_validated": false,
+            "browser_validated": false
+          }
+        },
+        {
+          "id": "US-002",
+          "title": "User can upload profile image",
+          "description": "As a user, I want to upload a profile image, so that I can personalize my account",
+          "acceptanceCriteria": [
+            "File input accepts only image types (jpg, png, gif)",
+            "Preview shown after file selection",
+            "Error shown if file > 5MB",
+            "Upload button triggers POST to /api/upload",
+            "Progress indicator shown during upload",
+            "Success shows uploaded image URL",
+            "Typecheck passes"
+          ],
+          "priority": 2,
+          "passes": false,
+          "depends_on": [],
+          "test_categories": ["image-media", "form-validation", "api-integration"],
+          "page_path": "/profile/upload",
+          "checkpoints": {
+            "tests_written": false,
+            "build_complete": false,
+            "playwright_validated": false,
+            "browser_validated": false
+          }
+        },
+        {
+          "id": "US-003",
+          "title": "User can view uploaded images in gallery",
+          "description": "As a user, I want to view my uploaded images in a gallery, so that I can manage them",
+          "acceptanceCriteria": [
+            "Gallery loads images from /api/images",
+            "Images display in grid layout",
+            "Clicking image opens full-size view",
+            "Empty state shown when no images",
+            "Loading skeleton shown while fetching",
+            "Typecheck passes"
+          ],
+          "priority": 3,
+          "passes": false,
+          "depends_on": ["US-002"],
+          "test_categories": ["image-media", "navigation", "api-integration"],
+          "page_path": "/gallery",
+          "checkpoints": {
+            "tests_written": false,
+            "build_complete": false,
+            "playwright_validated": false,
+            "browser_validated": false
+          }
+        }
+      ]
+    }
+  ],
+
+  "config": {
+    "max_attempts_per_story": 5,
+    "parallel_build": true,
+    "parallel_validate": true,
+    "dev_server_url": "http://localhost:3000",
+    "test_timeout_ms": 30000
+  }
+}
