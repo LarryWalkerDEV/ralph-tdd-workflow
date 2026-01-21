@@ -1,0 +1,29 @@
+{
+  "story_id": "TEST-001",
+  "title": "Dashboard with Project List",
+  "acceptance_criteria": [
+    "Dashboard shows list of projects in a table",
+    "Each project row shows title, status, and duration",
+    "Create New Project button is visible",
+    "Projects can be clicked to view details"
+  ],
+  "collected_at": "2026-01-21T16:00:00.000Z",
+
+  "screenshots": [
+    {
+      "name": "dashboard.png",
+      "description": "Dashboard page showing project list table with Create New Project button",
+      "path": "scripts/ralph/evidence/screenshots/TEST-001/dashboard.png"
+    }
+  ],
+
+  "playwright_output": "Running 4 tests using 1 worker\n\n  ✓ TEST-001 › Dashboard shows project list (1.2s)\n  ✓ TEST-001 › Project rows have title, status, duration (0.8s)\n  ✓ TEST-001 › Create New Project button visible (0.5s)\n  ✓ TEST-001 › Projects are clickable (0.9s)\n\n  4 passed (3.4s)",
+
+  "code_snippets": [
+    {
+      "file": "app/dashboard/page.tsx",
+      "lines": "1-30",
+      "content": "import { createClient } from '@/lib/supabase/server';\nimport ProjectTable from '@/components/ProjectTable';\nimport CreateProjectButton from '@/components/CreateProjectButton';\n\nexport default async function DashboardPage() {\n  const supabase = createClient();\n  \n  const { data: projects, error } = await supabase\n    .from('projects')\n    .select('id, title, status, duration_seconds')\n    .order('created_at', { ascending: false });\n    \n  if (error) {\n    return <div>Error loading projects</div>;\n  }\n  \n  return (\n    <div className=\"container mx-auto p-6\">\n      <header className=\"flex justify-between items-center mb-6\">\n        <h1 className=\"text-2xl font-bold\">My Projects</h1>\n        <CreateProjectButton />\n      </header>\n      <ProjectTable projects={projects || []} />\n    </div>\n  );\n}"
+    }
+  ]
+}

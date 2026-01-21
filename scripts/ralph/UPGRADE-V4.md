@@ -2,17 +2,29 @@
 
 ## Overview
 
-v4.0 introduces **External AI Review** and **Iterative Self-Refinement** to prevent Claude from "marking its own homework."
+v4.0 introduces **External AI Review with Vision** and **Evidence-Based Validation** to prevent Claude from "marking its own homework."
 
 ### Key Changes from v3.0
 
 | Feature | v3.0 | v4.0 |
 |---------|------|------|
-| Test Writing | Claude writes tests | **GLM-4.7-flash writes tests** (via OpenRouter) |
-| Validation | Claude runs validators | Claude collects evidence, **GLM reviews it** |
-| Refinement | Optional | **Mandatory 3 passes** before validation |
+| Test Writing | Claude writes tests | **Gemini 3 Flash writes tests** (via OpenRouter) |
+| Validation | Claude runs validators | Claude collects evidence, **Gemini 3 reviews with VISION** |
 | Evidence | None | **Screenshots + test output + code snippets** |
-| Token Efficiency | All Claude | Heavy work = Claude, Reviews = cheap GLM |
+| Visual Verification | None | **Gemini 3 SEES screenshots** - catches fakes |
+| Token Efficiency | All Claude | Heavy work = Claude, Reviews = cheap Gemini |
+
+### Why Gemini 3?
+
+After testing GLM-4.7-flash, Gemini 2.5 Flash, and Gemini 3 Flash Preview:
+
+| Model | Quality | Cost | Vision | Winner |
+|-------|---------|------|--------|--------|
+| GLM-4.7-flash | 7/10 | $0.01/1M | ❌ No | Budget option |
+| Gemini 2.5 Flash | 8/10 | $0.30/1M | ✅ Yes | - |
+| **Gemini 3 Flash** | **8.5/10** | ~$0.30/1M | ✅ **Yes** | **🏆 Best** |
+
+Gemini 3 produces the cleanest tests (106 lines vs 170) AND has vision to verify screenshots.
 
 ---
 
@@ -23,25 +35,27 @@ v4.0 introduces **External AI Review** and **Iterative Self-Refinement** to prev
 │                      RALPH v4.0                             │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  GLM-4.7-flash (via OpenRouter):                           │
-│  ├── Writes independent tests                               │
-│  ├── Reviews evidence packages                              │
-│  └── Approves/rejects with feedback                         │
+│  Gemini 3 Flash Preview (via OpenRouter):                   │
+│  ├── Writes independent tests (no mocking!)                 │
+│  ├── Reviews evidence with VISION (sees screenshots)        │
+│  └── Approves/rejects with detailed feedback                │
 │                                                             │
 │  Claude Code (has the tools):                               │
 │  ├── Playwright (run tests)                                 │
-│  ├── Chrome automation (screenshots)                        │
+│  ├── Chrome automation (take screenshots)                   │
 │  ├── Database access (query results)                        │
 │  ├── Implementation (code writing)                          │
 │  └── Evidence collection                                    │
 │                                                             │
 │  The Flow:                                                  │
-│  1. GLM writes tests (independent, no implementation bias)  │
-│  2. Claude implements (3 refinement passes)                 │
+│  1. Gemini 3 writes tests (no mocks, no fake data)          │
+│  2. Claude implements code to make tests pass               │
 │  3. Claude collects evidence (screenshots, logs, code)      │
-│  4. GLM reviews evidence → APPROVE / REJECT + feedback      │
-│  5. If rejected → Claude fixes → back to step 3             │
-│  6. If approved → mark-story-pass → next story              │
+│  4. Gemini 3 reviews with VISION → PASS / FAIL + feedback   │
+│  5. If FAIL → Claude fixes → back to step 3                 │
+│  6. If PASS → mark-story-pass → next story                  │
+│                                                             │
+│  ⚠️ Claude CANNOT cheat - Gemini SEES the screenshots!      │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```

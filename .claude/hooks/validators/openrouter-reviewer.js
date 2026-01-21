@@ -22,7 +22,17 @@ const crypto = require('crypto');
 // ============================================================================
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'z-ai/glm-4.7-flash';  // Very cheap: $0.01/1M tokens
+
+// Available models (can be overridden via --model flag)
+const MODELS = {
+  'glm': 'z-ai/glm-4.7-flash',           // Very cheap: $0.01/1M tokens
+  'gemini': 'google/gemini-2.0-flash-001', // Google Gemini 2.0 Flash
+  'gemini-25': 'google/gemini-2.5-flash',  // Gemini 2.5 Flash
+  'gemini-3': 'google/gemini-3-flash-preview'  // Gemini 3 Flash Preview (latest)
+};
+
+// Default model
+let MODEL = MODELS['glm'];
 
 // Paths
 const PRD_PATH = path.join('scripts', 'ralph', 'prd.json');
@@ -83,6 +93,43 @@ async function callOpenRouter(messages, maxTokens = 4096) {
   return data.choices[0].message.content;
 }
 
+/**
+ * Load image as base64 data URL for vision models
+ */
+function loadImageAsBase64(imagePath) {
+  if (!fs.existsSync(imagePath)) {
+    return null;
+  }
+
+  const imageBuffer = fs.readFileSync(imagePath);
+  const ext = path.extname(imagePath).toLowerCase();
+
+  let mimeType = 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+  else if (ext === '.gif') mimeType = 'image/gif';
+  else if (ext === '.webp') mimeType = 'image/webp';
+
+  return {
+    type: 'image_url',
+    image_url: {
+      url: `data:${mimeType};base64,${imageBuffer.toString('base64')}`
+    }
+  };
+}
+
+/**
+ * Build multimodal message content with text and images
+ */
+function buildMultimodalContent(text, images = []) {
+  const content = [{ type: 'text', text }];
+
+  for (const img of images) {
+    if (img) content.push(img);
+  }
+
+  return content;
+}
+
 // ============================================================================
 // TEST WRITING
 // ============================================================================
@@ -124,17 +171,39 @@ async function writeTests(storyId) {
   console.log('Generating Playwright tests via GLM...');
   console.log('');
 
-  // Build the prompt for test writing
-  const systemPrompt = `You are a senior QA engineer writing Playwright tests for a Next.js application.
-Your tests should be:
-- Comprehensive (cover all acceptance criteria)
-- Independent (don't depend on other tests)
-- Realistic (test actual user behavior)
-- Focused on PROVING the feature works
+  // Build the prompt for test writing (v4.0 - improved anti-mock rules)
+  const systemPrompt = `You are a senior QA engineer writing Playwright E2E tests for a Next.js application.
 
-Output ONLY the test code, no explanations. Use TypeScript.`;
+CRITICAL RULES - VIOLATIONS WILL BE REJECTED:
 
-  const userPrompt = `Write Playwright tests for this user story:
+1. ABSOLUTELY NO MOCKING
+   - NEVER use page.route() to mock API responses
+   - NEVER use page.setRequestInterception()
+   - NEVER fake any data - tests must hit REAL endpoints
+   - Tests should verify the ACTUAL system works, not mocked responses
+
+2. REALISTIC DATA ONLY
+   - Use UUID format for IDs: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+   - NEVER use 'test-123', 'proj-12345', 'example.com', or similar fake patterns
+   - If you need a project ID, use a realistic UUID
+
+3. FLEXIBLE SELECTORS (always provide fallbacks)
+   - BAD: page.getByTestId('button')
+   - GOOD: page.locator('[data-testid="button"], button[type="submit"]')
+
+4. TEST RESULTS, NOT ACTIONS
+   - After clicking a button, verify the RESULT appeared (success message, new element, etc.)
+   - NEVER check if page URL became an API URL (that doesn't happen!)
+   - BAD: expect(page).toHaveURL(/api\/save/)
+   - GOOD: expect(page.locator('.success-message')).toBeVisible()
+
+5. INCLUDE ERROR HANDLING TESTS
+   - At least one test should verify error states
+   - Test what happens with empty inputs, invalid data, etc.
+
+Output ONLY the test code. Use TypeScript. No explanations.`;
+
+  const userPrompt = `Write Playwright E2E tests for this user story:
 
 STORY ID: ${storyId}
 TITLE: ${story.title}
@@ -152,18 +221,30 @@ Then: ${us.then?.join('\n  And ')}
 `).join('\n')}
 ` : ''}
 
-REQUIREMENTS:
-1. Use Playwright test syntax: import { test, expect } from '@playwright/test'
-2. Use describe block with story ID: test.describe('${storyId} - ${story.title}', () => {...})
-3. Each acceptance criterion should have at least one test
-4. Use realistic test data (not "test123" or "example.com")
-5. Include proper async/await
-6. Add helpful test descriptions
-7. Use data-testid attributes for selectors when possible
-8. Include both happy path and error cases
-9. Base URL is already configured, use relative paths like '/dashboard'
+STRUCTURE REQUIREMENTS:
+- import { test, expect } from '@playwright/test'
+- test.describe('${storyId} - ${story.title}', () => {...})
+- One test per acceptance criterion minimum
+- Use beforeEach for navigation only (NOT for mocking!)
+- Base URL configured, use relative paths: '/dashboard', '/projects/[id]'
 
-Output the complete test file content only.`;
+SELECTOR PATTERN (use fallbacks):
+page.locator('[data-testid="name"], .fallback-class, element[attr="value"]')
+
+ASSERTION PATTERN:
+- For visibility: await expect(element).toBeVisible()
+- For text: await expect(element).toContainText('partial')
+- For value: const val = await element.inputValue(); expect(val.length).toBeGreaterThan(0)
+- For navigation: await expect(page).toHaveURL(/expected-path/)
+- For API results: await page.waitForResponse(resp => resp.url().includes('/api/') && resp.status() === 200)
+
+REMEMBER:
+- NO page.route() - NO MOCKING!
+- NO fake IDs like 'test-123'
+- Include at least 1 error/edge case test
+- Test the REAL system behavior
+
+Output complete test file only.`;
 
   try {
     const testCode = await callOpenRouter([
@@ -235,14 +316,20 @@ Output the complete test file content only.`;
 }
 
 // ============================================================================
-// EVIDENCE REVIEW
+// EVIDENCE REVIEW (with Vision Support)
 // ============================================================================
 
 async function reviewEvidence(storyId) {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════');
-  console.log(`GLM EVIDENCE REVIEW: ${storyId}`);
+  console.log(`GEMINI EVIDENCE REVIEW: ${storyId}`);
   console.log('═══════════════════════════════════════════════════════════');
+  console.log('');
+
+  // Force Gemini 3 for vision support
+  const originalModel = MODEL;
+  MODEL = MODELS['gemini-3'];
+  console.log(`Using vision model: ${MODEL}`);
   console.log('');
 
   // Load evidence package
@@ -255,101 +342,154 @@ async function reviewEvidence(storyId) {
 
   const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
 
+  // Load screenshots as base64 images
+  const screenshots = [];
+  const screenshotDescriptions = [];
+
+  if (evidence.screenshots?.length > 0) {
+    console.log('Loading screenshots for vision analysis...');
+    for (const screenshot of evidence.screenshots) {
+      const imgPath = path.join(process.cwd(), screenshot.path);
+      const imgData = loadImageAsBase64(imgPath);
+      if (imgData) {
+        screenshots.push(imgData);
+        screenshotDescriptions.push(`[IMAGE ${screenshots.length}] ${screenshot.name}: ${screenshot.description || 'No description'}`);
+        console.log(`  ✓ Loaded: ${screenshot.name}`);
+      } else {
+        console.log(`  ✗ Not found: ${imgPath}`);
+      }
+    }
+    console.log('');
+  }
+
   console.log(`Story: ${evidence.title}`);
   console.log(`Acceptance Criteria: ${evidence.acceptance_criteria?.length || 0}`);
-  console.log(`Screenshots: ${evidence.screenshots?.length || 0}`);
+  console.log(`Screenshots loaded: ${screenshots.length}`);
   console.log(`Test Output: ${evidence.playwright_output ? 'YES' : 'NO'}`);
-  console.log(`Database Queries: ${evidence.db_queries?.length || 0}`);
-  console.log(`Network Logs: ${evidence.network_log?.length || 0}`);
   console.log(`Code Snippets: ${evidence.code_snippets?.length || 0}`);
   console.log('');
-  console.log('Sending to GLM for review...');
+  console.log('Sending to Gemini 3 for visual review...');
   console.log('');
 
-  // Build review prompt
-  const systemPrompt = `You are a strict QA reviewer. A developer claims their feature is complete.
-Your job is to review their EVIDENCE and decide if it's truly working.
+  // Build review prompt with vision instructions
+  const systemPrompt = `You are a strict QA reviewer with VISION capabilities.
+You can SEE screenshots that the developer provides as evidence.
 
-Be skeptical. Look for:
-- Mock data instead of real data
-- Placeholder text
-- Skipped tests
-- Missing error handling
-- Hardcoded values
+Your job is to:
+1. LOOK at the screenshots carefully - verify UI elements exist and look correct
+2. READ the test output - verify tests actually passed
+3. CHECK the code snippets - verify implementation is real, not mocked
+4. DECIDE if the feature is truly complete
 
-Output ONLY valid JSON, no explanations.`;
+BE SKEPTICAL. Look for:
+- Screenshots showing placeholder/lorem ipsum text
+- Screenshots with error states or missing elements
+- Mock data instead of real database data
+- Hardcoded values in code snippets
+- Test output showing skipped or failing tests
+- Missing UI elements that acceptance criteria require
 
-  const userPrompt = `Review this evidence and decide if the feature is complete:
+OUTPUT ONLY VALID JSON - no markdown, no explanations before/after.`;
 
-STORY: ${evidence.title}
+  const userPrompt = `REVIEW THIS EVIDENCE AND DECIDE IF THE FEATURE IS COMPLETE.
+
+══════════════════════════════════════════════════════════════
+STORY DETAILS
+══════════════════════════════════════════════════════════════
 STORY ID: ${evidence.story_id}
+TITLE: ${evidence.title}
 
-ACCEPTANCE CRITERIA:
-${(evidence.acceptance_criteria || []).map((ac, i) => `${i + 1}. ${ac}`).join('\n')}
+ACCEPTANCE CRITERIA (you must verify ALL of these):
+${(evidence.acceptance_criteria || []).map((ac, i) => `  ${i + 1}. ${ac}`).join('\n')}
 
-═══════════════════════════════════════════════════════════
-EVIDENCE
-═══════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════
+VISUAL EVIDENCE - SCREENSHOTS
+══════════════════════════════════════════════════════════════
+${screenshots.length > 0
+  ? `I am providing ${screenshots.length} screenshot(s) for you to examine:
+${screenshotDescriptions.map((d, i) => `  ${d}`).join('\n')}
 
-1. SCREENSHOTS:
-${evidence.screenshots?.length > 0
-  ? evidence.screenshots.map(s => `   - ${s.name}: ${s.description || 'No description'}`).join('\n')
-  : '   (none provided)'}
+LOOK AT EACH IMAGE and verify:
+- Does the UI match what the acceptance criteria requires?
+- Are there any error messages or broken elements?
+- Is there real data displayed (not lorem ipsum or placeholder)?
+- Do buttons, forms, and navigation elements exist?`
+  : 'NO SCREENSHOTS PROVIDED - This is a RED FLAG. Request screenshots.'}
 
-2. PLAYWRIGHT TEST OUTPUT:
+══════════════════════════════════════════════════════════════
+TEST OUTPUT
+══════════════════════════════════════════════════════════════
 \`\`\`
-${evidence.playwright_output || '(not provided)'}
+${evidence.playwright_output || 'NO TEST OUTPUT PROVIDED - This is a RED FLAG.'}
 \`\`\`
 
-3. DATABASE QUERIES:
-${evidence.db_queries?.length > 0
-  ? evidence.db_queries.map(q => `
-   Query: ${q.query}
-   Result: ${JSON.stringify(q.result, null, 2).substring(0, 500)}
-`).join('\n')
-  : '   (none provided)'}
+VERIFY:
+- Do ALL tests pass? (Look for "passed" count)
+- Are there any "failed" or "skipped" tests?
+- Does the test count match the number of acceptance criteria?
 
-4. NETWORK LOG:
-${evidence.network_log?.length > 0
-  ? evidence.network_log.map(n => `   ${n.method} ${n.url} → ${n.status}`).join('\n')
-  : '   (none provided)'}
-
-5. KEY CODE SNIPPETS:
+══════════════════════════════════════════════════════════════
+CODE IMPLEMENTATION
+══════════════════════════════════════════════════════════════
 ${evidence.code_snippets?.length > 0
   ? evidence.code_snippets.map(c => `
-   // ${c.file} (lines ${c.lines})
-   ${c.content.substring(0, 500)}
+FILE: ${c.file} (lines ${c.lines})
+\`\`\`typescript
+${c.content.substring(0, 800)}${c.content.length > 800 ? '\n... (truncated)' : ''}
+\`\`\`
 `).join('\n')
-  : '   (none provided)'}
+  : 'NO CODE SNIPPETS PROVIDED'}
 
-═══════════════════════════════════════════════════════════
-YOUR REVIEW
-═══════════════════════════════════════════════════════════
+VERIFY:
+- Is there real implementation (not TODO comments)?
+- Are there any mock: true or fake data patterns?
+- Does the code handle errors properly?
 
-Analyze each piece of evidence and output JSON:
+══════════════════════════════════════════════════════════════
+YOUR VERDICT
+══════════════════════════════════════════════════════════════
+
+Analyze ALL evidence and return this EXACT JSON structure:
 
 {
-  "approved": boolean,
-  "confidence": 0-100,
-  "checklist": {
-    "tests_pass": boolean,
-    "real_data": boolean,
-    "no_mocks": boolean,
-    "error_handling": boolean,
-    "acceptance_met": boolean
+  "verdict": "PASS" or "FAIL",
+  "confidence": <number 0-100>,
+  "screenshots_analysis": {
+    "examined": <number of screenshots you looked at>,
+    "findings": ["what you observed in each screenshot"],
+    "concerns": ["any visual issues found"]
   },
-  "criteria_review": [
-    { "criterion": "...", "met": boolean, "evidence": "..." }
+  "tests_analysis": {
+    "all_passed": <boolean>,
+    "test_count": <number>,
+    "issues": ["any test concerns"]
+  },
+  "criteria_checklist": [
+    {
+      "criterion": "<copy the acceptance criterion>",
+      "met": <boolean>,
+      "evidence_type": "screenshot|test|code|none",
+      "reasoning": "<why you believe this is met or not>"
+    }
   ],
-  "concerns": ["list any issues"],
-  "feedback": "what to fix if rejected (empty if approved)"
-}`;
+  "blocking_issues": ["list any issues that MUST be fixed before approval"],
+  "suggestions": ["optional improvements, not blocking"],
+  "final_feedback": "<one paragraph summary of your decision>"
+}
+
+IMPORTANT: Output ONLY the JSON object. No text before or after.`;
 
   try {
+    // Build multimodal message with screenshots
+    const userContent = buildMultimodalContent(userPrompt, screenshots);
+
     const response = await callOpenRouter([
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
+      { role: 'user', content: userContent }
     ], 4096);
+
+    // Restore original model
+    MODEL = originalModel;
 
     // Parse JSON response
     let review;
@@ -362,10 +502,13 @@ Analyze each piece of evidence and output JSON:
         throw new Error('No JSON found in response');
       }
     } catch (e) {
-      console.error('Failed to parse GLM response as JSON');
-      console.error('Raw response:', response);
+      console.error('Failed to parse Gemini response as JSON');
+      console.error('Raw response:', response.substring(0, 1000));
       process.exit(1);
     }
+
+    // Normalize verdict (support both old and new format)
+    const isApproved = review.verdict === 'PASS' || review.approved === true;
 
     // Save review result
     fs.mkdirSync(REVIEWS_DIR, { recursive: true });
@@ -374,7 +517,8 @@ Analyze each piece of evidence and output JSON:
     const reviewResult = {
       story_id: storyId,
       timestamp: new Date().toISOString(),
-      model: MODEL,
+      model: MODELS['gemini-3'],
+      screenshots_analyzed: screenshots.length,
       review: review
     };
 
@@ -382,28 +526,49 @@ Analyze each piece of evidence and output JSON:
 
     // Display result
     console.log('═══════════════════════════════════════════════════════════');
-    if (review.approved) {
-      console.log('✓ GLM APPROVED');
+    if (isApproved) {
+      console.log('✓ GEMINI APPROVED');
       console.log('═══════════════════════════════════════════════════════════');
       console.log(`Confidence: ${review.confidence}%`);
       console.log('');
-      console.log('Checklist:');
-      Object.entries(review.checklist || {}).forEach(([key, val]) => {
-        console.log(`  ${val ? '✓' : '✗'} ${key}`);
+
+      // Screenshot analysis
+      if (review.screenshots_analysis) {
+        console.log(`Screenshots examined: ${review.screenshots_analysis.examined}`);
+        if (review.screenshots_analysis.findings?.length > 0) {
+          console.log('Visual findings:');
+          review.screenshots_analysis.findings.forEach(f => console.log(`  ✓ ${f}`));
+        }
+        console.log('');
+      }
+
+      // Tests analysis
+      if (review.tests_analysis) {
+        console.log(`Tests passed: ${review.tests_analysis.all_passed ? 'YES' : 'NO'} (${review.tests_analysis.test_count} tests)`);
+        console.log('');
+      }
+
+      // Criteria checklist
+      console.log('Acceptance Criteria:');
+      (review.criteria_checklist || []).forEach(c => {
+        console.log(`  ${c.met ? '✓' : '✗'} ${c.criterion}`);
+        if (c.reasoning) console.log(`      └─ ${c.reasoning}`);
       });
 
       // Create validator result for checkpoint
       const validatorResult = {
         story_id: storyId,
-        validator: 'glm-reviewer',
+        validator: 'gemini-reviewer',
         result: 'PASS',
-        pass_rate: `${review.confidence}%`,
+        confidence: review.confidence,
         timestamp: new Date().toISOString(),
-        model: MODEL,
-        criteria: (review.criteria_review || []).map(c => ({
+        model: MODELS['gemini-3'],
+        screenshots_analyzed: screenshots.length,
+        criteria: (review.criteria_checklist || []).map(c => ({
           description: c.criterion,
           passed: c.met,
-          evidence: c.evidence
+          evidence_type: c.evidence_type,
+          reasoning: c.reasoning
         }))
       };
 
@@ -414,7 +579,7 @@ Analyze each piece of evidence and output JSON:
 
       fs.mkdirSync(VALIDATOR_RESULTS_DIR, { recursive: true });
       fs.writeFileSync(
-        path.join(VALIDATOR_RESULTS_DIR, `${storyId}_glm_review.json`),
+        path.join(VALIDATOR_RESULTS_DIR, `${storyId}_gemini_review.json`),
         JSON.stringify(validatorResult, null, 2)
       );
 
@@ -422,39 +587,65 @@ Analyze each piece of evidence and output JSON:
       console.log('Next: Run cleanup and mark story as passed.');
 
     } else {
-      console.log('✗ GLM REJECTED');
+      console.log('✗ GEMINI REJECTED');
       console.log('═══════════════════════════════════════════════════════════');
       console.log(`Confidence: ${review.confidence}%`);
       console.log('');
-      console.log('Checklist:');
-      Object.entries(review.checklist || {}).forEach(([key, val]) => {
-        console.log(`  ${val ? '✓' : '✗'} ${key}`);
-      });
-      console.log('');
-      if (review.concerns?.length > 0) {
-        console.log('Concerns:');
-        review.concerns.forEach(c => console.log(`  - ${c}`));
+
+      // Screenshot concerns
+      if (review.screenshots_analysis?.concerns?.length > 0) {
+        console.log('Visual concerns:');
+        review.screenshots_analysis.concerns.forEach(c => console.log(`  ⚠ ${c}`));
         console.log('');
       }
-      console.log('Feedback:');
-      console.log(`  ${review.feedback || 'No specific feedback'}`);
+
+      // Tests issues
+      if (review.tests_analysis?.issues?.length > 0) {
+        console.log('Test issues:');
+        review.tests_analysis.issues.forEach(i => console.log(`  ⚠ ${i}`));
+        console.log('');
+      }
+
+      // Criteria checklist
+      console.log('Acceptance Criteria:');
+      (review.criteria_checklist || []).forEach(c => {
+        console.log(`  ${c.met ? '✓' : '✗'} ${c.criterion}`);
+        if (!c.met && c.reasoning) console.log(`      └─ ${c.reasoning}`);
+      });
       console.log('');
+
+      // Blocking issues
+      if (review.blocking_issues?.length > 0) {
+        console.log('BLOCKING ISSUES (must fix):');
+        review.blocking_issues.forEach(i => console.log(`  ✗ ${i}`));
+        console.log('');
+      }
+
+      // Final feedback
+      if (review.final_feedback) {
+        console.log('Feedback:');
+        console.log(`  ${review.final_feedback}`);
+        console.log('');
+      }
+
       console.log('Next: Fix the issues and re-collect evidence.');
 
       // Create FAIL validator result
       const validatorResult = {
         story_id: storyId,
-        validator: 'glm-reviewer',
+        validator: 'gemini-reviewer',
         result: 'FAIL',
-        pass_rate: `${review.confidence}%`,
+        confidence: review.confidence,
         timestamp: new Date().toISOString(),
-        model: MODEL,
-        feedback: review.feedback,
-        concerns: review.concerns,
-        criteria: (review.criteria_review || []).map(c => ({
+        model: MODELS['gemini-3'],
+        screenshots_analyzed: screenshots.length,
+        blocking_issues: review.blocking_issues,
+        final_feedback: review.final_feedback,
+        criteria: (review.criteria_checklist || []).map(c => ({
           description: c.criterion,
           passed: c.met,
-          evidence: c.evidence
+          evidence_type: c.evidence_type,
+          reasoning: c.reasoning
         }))
       };
 
@@ -465,7 +656,7 @@ Analyze each piece of evidence and output JSON:
 
       fs.mkdirSync(VALIDATOR_RESULTS_DIR, { recursive: true });
       fs.writeFileSync(
-        path.join(VALIDATOR_RESULTS_DIR, `${storyId}_glm_review.json`),
+        path.join(VALIDATOR_RESULTS_DIR, `${storyId}_gemini_review.json`),
         JSON.stringify(validatorResult, null, 2)
       );
     }
@@ -473,7 +664,7 @@ Analyze each piece of evidence and output JSON:
     console.log('═══════════════════════════════════════════════════════════');
     console.log(`Review saved: ${reviewPath}`);
 
-    process.exit(review.approved ? 0 : 1);
+    process.exit(isApproved ? 0 : 1);
 
   } catch (error) {
     console.error('ERROR:', error.message);
@@ -540,13 +731,30 @@ async function checkStatus() {
 // ============================================================================
 
 const args = process.argv.slice(2);
+
+// Parse --model flag
+const modelFlagIndex = args.findIndex(a => a === '--model');
+if (modelFlagIndex !== -1 && args[modelFlagIndex + 1]) {
+  const modelName = args[modelFlagIndex + 1];
+  if (MODELS[modelName]) {
+    MODEL = MODELS[modelName];
+    console.log(`Using model: ${modelName} (${MODEL})`);
+  } else {
+    console.log(`Unknown model: ${modelName}`);
+    console.log(`Available models: ${Object.keys(MODELS).join(', ')}`);
+    process.exit(1);
+  }
+  // Remove --model and its value from args
+  args.splice(modelFlagIndex, 2);
+}
+
 const command = args[0];
 const storyId = args[1];
 
 switch (command) {
   case 'write-tests':
     if (!storyId) {
-      console.log('Usage: node openrouter-reviewer.js write-tests <story-id>');
+      console.log('Usage: node openrouter-reviewer.js write-tests <story-id> [--model glm|gemini|gemini-preview]');
       process.exit(1);
     }
     writeTests(storyId);
