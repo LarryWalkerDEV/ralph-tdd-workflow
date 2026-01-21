@@ -1196,6 +1196,38 @@ function markStoryPass(storyId) {
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // LAYER 0 (v4.0): Verify refinement passes are complete
+  // ═══════════════════════════════════════════════════════════════════════════
+  const refinementPath = path.join('.claude', 'refinement', `${storyId}.json`);
+  if (fs.existsSync(refinementPath)) {
+    console.log('[Layer 0] Checking refinement passes (v4.0)...');
+    try {
+      const refinementState = JSON.parse(fs.readFileSync(refinementPath, 'utf8'));
+      const allPassesComplete = [1, 2, 3].every(i => refinementState.passes[i]?.complete === true);
+
+      if (!allPassesComplete) {
+        console.log('  ✗ BLOCKED: Refinement passes incomplete');
+        console.log('');
+        console.log('  v4.0 requires 3 refinement passes before marking story as passed:');
+        console.log(`    Pass 1 (Make it work): ${refinementState.passes[1]?.complete ? '✓' : '✗'}`);
+        console.log(`    Pass 2 (Make it better): ${refinementState.passes[2]?.complete ? '✓' : '✗'}`);
+        console.log(`    Pass 3 (Make it robust): ${refinementState.passes[3]?.complete ? '✓' : '✗'}`);
+        console.log('');
+        console.log('  Complete remaining passes:');
+        console.log('    node .claude/hooks/validators/refinement-enforcer.js require ' + storyId);
+        console.log('    node .claude/hooks/validators/refinement-enforcer.js complete-pass ' + storyId + ' <N>');
+        console.log('');
+        process.exit(EXIT_BLOCK);
+      }
+      console.log('  ✓ All 3 refinement passes complete');
+    } catch (e) {
+      console.log('  ⚠ Could not parse refinement state (continuing)');
+    }
+  } else {
+    console.log('[Layer 0] No refinement tracking found (v3.0 mode)');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // LAYER 1: Verify prd.json exists and story is valid
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('[Layer 1] Verifying prd.json...');
@@ -1227,6 +1259,41 @@ function markStoryPass(storyId) {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('');
   console.log('[Layer 2] Verifying validator results...');
+
+  // v4.0: Check if GLM review is required (if refinement tracking exists)
+  const glmReviewPath = path.join(VALIDATOR_RESULTS_DIR, `${storyId}_glm_review.json`);
+  const hasRefinementTracking = fs.existsSync(path.join('.claude', 'refinement', `${storyId}.json`));
+
+  // If v4.0 mode (has refinement tracking), require GLM review
+  if (hasRefinementTracking) {
+    if (!fs.existsSync(glmReviewPath)) {
+      console.log('  ✗ BLOCKED: No GLM review found (v4.0 required)');
+      console.log('');
+      console.log('  v4.0 requires GLM approval before marking story as passed.');
+      console.log('  Steps:');
+      console.log('    1. Collect evidence: node .claude/hooks/validators/evidence-collector.js collect ' + storyId);
+      console.log('    2. Get GLM review: node .claude/hooks/validators/openrouter-reviewer.js review ' + storyId);
+      console.log('');
+      process.exit(EXIT_BLOCK);
+    }
+
+    try {
+      const glmReview = JSON.parse(fs.readFileSync(glmReviewPath, 'utf8'));
+      if (glmReview.result !== 'PASS') {
+        console.log('  ✗ BLOCKED: GLM review did not pass');
+        console.log(`    Result: ${glmReview.result}`);
+        if (glmReview.feedback) {
+          console.log(`    Feedback: ${glmReview.feedback}`);
+        }
+        console.log('');
+        console.log('  Fix the issues and re-run GLM review.');
+        process.exit(EXIT_BLOCK);
+      }
+      console.log('  ✓ GLM review: PASS');
+    } catch (e) {
+      console.log('  ⚠ Could not parse GLM review (continuing)');
+    }
+  }
 
   const validators = ['playwright', 'browser', 'whitebox'];  // v3.0: Added whitebox
   const validatorResults = {};
