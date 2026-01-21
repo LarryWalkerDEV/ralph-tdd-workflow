@@ -53,7 +53,54 @@ This repository contains the **Ralph TDD Workflow v3.0** - an enforced Test-Driv
 
 ---
 
-## v3.0 Features (NEW)
+## v4.0 Features (LATEST)
+
+- **External AI Review** - GLM-4.7-flash writes tests AND reviews evidence (Claude can't "mark its own homework")
+- **Evidence-Based Validation** - Screenshots, test output, DB queries, network logs (unfakeable proof)
+- **Iterative Self-Refinement** - 3 mandatory passes before validation (better code quality)
+- **Token Efficient** - Heavy work by Claude, cheap reviews by GLM ($0.01/1M tokens)
+- **Self-Improvement** - AGENTS.md and LEARNINGS.md grow with each project
+
+### v4.0 Workflow
+
+```
+FOR EACH story:
+  1. READ AGENTS.md + LEARNINGS.md (MANDATORY)
+  2. set-story → creates git checkpoint
+  3. GLM WRITES TESTS (external AI, no implementation bias)
+  4. IMPLEMENT Pass 1: "Make it work" → tests pass
+  5. IMPLEMENT Pass 2: "Make it better" → code quality
+  6. IMPLEMENT Pass 3: "Make it robust" → error handling
+  7. COLLECT EVIDENCE (screenshots, logs, code)
+  8. GLM REVIEWS EVIDENCE → APPROVE / REJECT
+  9. IF rejected → back to step 4 with feedback
+  10. whitebox validation + cleanup
+  11. mark-story-pass (requires GLM approval)
+```
+
+### v4.0 Commands
+
+```bash
+# GLM test writing
+node .claude/hooks/validators/openrouter-reviewer.js write-tests US-XXX
+
+# Evidence collection
+node .claude/hooks/validators/evidence-collector.js collect US-XXX
+
+# GLM review
+node .claude/hooks/validators/openrouter-reviewer.js review US-XXX
+
+# Refinement
+node .claude/hooks/validators/refinement-enforcer.js require US-XXX
+node .claude/hooks/validators/refinement-enforcer.js complete-pass US-XXX 1
+node .claude/hooks/validators/refinement-enforcer.js check US-XXX
+```
+
+See `scripts/ralph/UPGRADE-V4.md` for full documentation.
+
+---
+
+## v3.0 Features
 
 - **Intent Engineering** - Full discovery phase before PRD (personas, constraints, risks, metrics)
 - **Whitebox Validation** - Code structure, security, performance, and error handling checks
