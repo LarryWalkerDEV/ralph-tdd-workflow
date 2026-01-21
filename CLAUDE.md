@@ -209,6 +209,11 @@ node .claude/hooks/ralph-guard.js rollback US-001        # Rollback to checkpoin
 node .claude/hooks/ralph-guard.js cleanup US-001         # Run per-story cleanup
 node .claude/hooks/ralph-guard.js metrics                # Show metrics summary
 
+# v3.0 Iteration Tracking (auto conflict-resolver)
+node .claude/hooks/ralph-guard.js record-iteration US-001 "Validation failed"  # Record failure
+node .claude/hooks/ralph-guard.js check-iterations US-001    # Check iteration count
+node .claude/hooks/ralph-guard.js clear-iterations US-001    # Reset after conflict resolved
+
 # v3.0 Learning Enforcer
 node .claude/hooks/validators/learning-enforcer.js list           # List block patterns
 node .claude/hooks/validators/learning-enforcer.js test BP-001 "mock = true"
@@ -244,10 +249,12 @@ node .claude/hooks/ralph-guard.js audit                   # Show audit trail log
 | `scripts/ralph/prd.json` | Stories with v3.0 schema |
 | `scripts/ralph/STATE.md` | Progress tracking |
 | `scripts/ralph/AGENTS.md` | Learned patterns and error solutions |
-| `scripts/ralph/LEARNINGS.md` | Block patterns for enforcer (v3.0) |
+| `scripts/ralph/LEARNINGS.md` | Block patterns + **Subagent Implementation Guide** |
 | `scripts/ralph/METRICS.json` | Full metrics data (v3.0) |
 | `scripts/ralph/INTENT.md` | Intent engineering output (v3.0) |
 | `scripts/ralph/USER-STORIES.md` | Gherkin scenarios (v3.0) |
+| `scripts/ralph/conflicts/` | Auto-generated conflict reports (v3.0) |
+| `.claude/story_iterations.json` | Iteration tracking per story (v3.0) |
 | `scripts/ralph/migrate-to-v3.js` | Migration script (v3.0) |
 
 ---
@@ -393,7 +400,7 @@ node .claude/hooks/ralph-guard.js rollback US-XXX
 
 ---
 
-## Iteration Loop (v3.0)
+## Iteration Loop (v3.0) - With Auto Conflict-Resolver
 
 ```
 attempts = 0
@@ -406,15 +413,53 @@ while (not validated && attempts < 5):
         run cleanup
         validated = true
     else:
-        record iteration + failure reason (metrics)
-        run tdd-implementer with failure details
-        attempts++
+        # RECORD ITERATION (triggers auto conflict-resolver at 5)
+        node ralph-guard.js record-iteration US-XXX "reason"
 
-if (attempts >= 5):
-    rollback to git checkpoint
-    run conflict-resolver to diagnose
-    escalate to human
+        if (exit code == 3):  # MAX_ITERATIONS_REACHED
+            # Auto-generated: scripts/ralph/conflicts/CONFLICT-US-XXX.md
+            # MUST invoke conflict-resolver before continuing
+            STOP and invoke conflict-resolver
+        else:
+            run tdd-implementer with failure details
+            attempts++
 ```
+
+### Automatic Conflict-Resolver Trigger
+
+After 5 failed iterations, `record-iteration` automatically:
+1. **Generates conflict report**: `scripts/ralph/conflicts/CONFLICT-{story-id}.md`
+2. **Rolls back** to git checkpoint
+3. **Clears checkpoints** for the story
+4. **Exits with code 3** (CONFLICT_RESOLVER_REQUIRED)
+
+The conflict report contains:
+- All validator results (PASS/FAIL for each)
+- Failure history (last 5 attempts with reasons)
+- Acceptance criteria for the story
+- Ready-to-use Task() invocation for conflict-resolver
+
+### Commands for Iteration Tracking
+
+```bash
+# Record a failed iteration (auto-triggers at 5)
+node .claude/hooks/ralph-guard.js record-iteration US-001 "Playwright failed: button not found"
+
+# Check iteration count
+node .claude/hooks/ralph-guard.js check-iterations US-001
+# Output: Iterations: 3/5, STATUS: OK - 2 attempts remaining
+
+# Reset iterations (after conflict resolved)
+node .claude/hooks/ralph-guard.js clear-iterations US-001
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 2 | BLOCKED (cannot proceed, fix required) |
+| 3 | CONFLICT_RESOLVER_REQUIRED (max iterations reached) |
 
 ---
 
@@ -432,6 +477,33 @@ if (attempts >= 5):
 
 ---
 
+## Creating New Subagents
+
+**IMPORTANT: Read `scripts/ralph/LEARNINGS.md` before creating new subagents.**
+
+The LEARNINGS.md file contains the **Subagent Implementation Guide** with:
+- Critical YAML format requirements (description MUST be single-line with `\n`)
+- Full agent template
+- Debugging checklist
+- Common mistakes and fixes
+
+### Quick Reference
+
+```yaml
+# CORRECT format - description on ONE LINE with \n escapes
+description: "Use this agent when...\n\nExamples:\n\n<example>\nuser: \"request\"\n</example>"
+
+# WRONG format - multiline (agent will NOT register)
+description: "Use this agent when...
+
+Examples:
+..."
+```
+
+After creating agent in `.claude/agents/`, **restart Claude Code** to load it.
+
+---
+
 ## DO NOT
 
 - Start implementing without activating Ralph: `node .claude/hooks/ralph-guard.js start`
@@ -441,6 +513,7 @@ if (attempts >= 5):
 - Skip cleanup phase (required in v3.0)
 - Use patterns in LEARNINGS.md (enforcer will BLOCK)
 - Skip reading AGENTS.md (will repeat mistakes)
+- Skip reading LEARNINGS.md when creating subagents (agents won't register)
 - Process dependent stories in parallel
 - **Exit loop before ALL stories pass** (hook will BLOCK with exit 2)
 - Skip marking stories as passed in prd.json (`mark-story-pass`)
