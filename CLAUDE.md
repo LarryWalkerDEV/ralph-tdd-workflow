@@ -214,7 +214,12 @@ node .claude/hooks/ralph-guard.js record-iteration US-001 "Validation failed"  #
 node .claude/hooks/ralph-guard.js check-iterations US-001    # Check iteration count
 node .claude/hooks/ralph-guard.js clear-iterations US-001    # Reset after conflict resolved
 
-# v3.0 Learning Enforcer
+# v3.0 Learnings Enforcement (ENFORCED after >2 iterations)
+node .claude/hooks/ralph-guard.js add-learning US-001 "problem" "solution"   # Document learning
+node .claude/hooks/ralph-guard.js add-block-pattern US-001 "regex" "fix"     # Add block pattern
+node .claude/hooks/ralph-guard.js check-learnings US-001                     # Check if documented
+
+# v3.0 Learning Enforcer (blocks bad patterns)
 node .claude/hooks/validators/learning-enforcer.js list           # List block patterns
 node .claude/hooks/validators/learning-enforcer.js test BP-001 "mock = true"
 
@@ -353,6 +358,72 @@ The learning enforcer blocks edits that introduce known-bad patterns.
 | BP-005 | `process.env.X \|\| "long..."` | Inline secrets |
 | BP-006 | `test.skip` | Skipped tests |
 | BP-007 | `expect().toBe(true) // always` | Meaningless assertions |
+
+---
+
+## Learnings Enforcement (v3.0) - ENFORCED
+
+**Learnings are required when a story takes >2 iterations.**
+
+After multiple failed iterations, you MUST document what you learned before marking the story as passed. This prevents repeating the same mistakes.
+
+### How It Works
+
+1. If `iterations > 2`, the system checks if `AGENTS.md` or `LEARNINGS.md` was modified
+2. If not modified → `mark-story-pass` is **BLOCKED**
+3. You must document the problem and solution before proceeding
+
+### Commands
+
+```bash
+# Add a learning (problem + solution)
+node .claude/hooks/ralph-guard.js add-learning US-005 "Selector was wrong" "Use data-testid"
+
+# Add a block pattern (prevents future mistakes)
+node .claude/hooks/ralph-guard.js add-block-pattern US-005 "mock\\s*=" "Use real data"
+
+# Check if learnings are documented
+node .claude/hooks/ralph-guard.js check-learnings US-005
+```
+
+### What Gets Recorded
+
+In `AGENTS.md`:
+```markdown
+## US-005 - 2026-01-21T12:00:00Z
+**Iterations**: 4
+**Problem**: Selector was wrong
+**Solution**: Use data-testid
+**Failures**:
+  - Attempt 1: Button not found
+  - Attempt 2: Wrong element clicked
+  - Attempt 3: Timeout
+  - Attempt 4: Finally found issue
+```
+
+---
+
+## Cleanup Phase (v3.0) - ENFORCED
+
+The cleanup phase runs **after validation passes** and is **required** before marking a story complete.
+
+### What Cleanup Does
+
+1. **ESLint --fix** - Auto-fix linting issues
+2. **Prettier** - Format code (if available)
+3. **TypeScript check** - Verify no type errors
+4. **Mock pattern scan** - Warn about leftover mocks
+5. **Code-simplifier reminder** - Prompt to run refactoring agent
+
+### Running Cleanup
+
+```bash
+node .claude/hooks/ralph-guard.js cleanup US-005
+```
+
+### Cleanup Checkpoint
+
+Creates `cleanup_complete` checkpoint when successful. This is **required** for `mark-story-pass`.
 
 ---
 

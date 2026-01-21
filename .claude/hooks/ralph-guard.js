@@ -52,9 +52,12 @@ const METRICS_PATH = path.join('scripts', 'ralph', 'METRICS.json');
 const GIT_CHECKPOINTS_FILE = path.join('.claude', 'git_checkpoints.json');
 const ITERATIONS_FILE = path.join('.claude', 'story_iterations.json');
 const CONFLICTS_DIR = path.join('scripts', 'ralph', 'conflicts');
+const AGENTS_MD_PATH = path.join('scripts', 'ralph', 'AGENTS.md');
+const LEARNINGS_MD_PATH = path.join('scripts', 'ralph', 'LEARNINGS.md');
 
 // Configuration
 const MAX_ITERATIONS = 5;  // Auto-invoke conflict-resolver after this many failures
+const REQUIRE_LEARNINGS_AFTER_ITERATIONS = 2;  // Require documenting learnings if iterations > this
 
 // Exit codes
 const EXIT_ALLOW = 0;
@@ -176,6 +179,82 @@ function clearStoryIterations(storyId) {
   if (iterations[storyId]) {
     delete iterations[storyId];
     saveIterations(iterations);
+  }
+}
+
+// ============================================================================
+// LEARNINGS ENFORCEMENT (v3.0)
+// ============================================================================
+
+function getAgentsMdLastModified() {
+  if (!fs.existsSync(AGENTS_MD_PATH)) return null;
+  return fs.statSync(AGENTS_MD_PATH).mtime;
+}
+
+function getLearningsMdLastModified() {
+  if (!fs.existsSync(LEARNINGS_MD_PATH)) return null;
+  return fs.statSync(LEARNINGS_MD_PATH).mtime;
+}
+
+function checkLearningsDocumented(storyId) {
+  const iterationData = getStoryIterations(storyId);
+
+  // If iterations <= threshold, no documentation required
+  if (iterationData.count <= REQUIRE_LEARNINGS_AFTER_ITERATIONS) {
+    return { required: false, documented: true };
+  }
+
+  // Check if AGENTS.md or LEARNINGS.md was modified after iterations started
+  const firstIterationTime = iterationData.failures[0]?.timestamp;
+  if (!firstIterationTime) {
+    return { required: true, documented: false, reason: 'No iteration timestamp found' };
+  }
+
+  const iterationStartTime = new Date(firstIterationTime);
+  const agentsMdTime = getAgentsMdLastModified();
+  const learningsMdTime = getLearningsMdLastModified();
+
+  // Check if either file was modified after iterations started
+  const agentsUpdated = agentsMdTime && agentsMdTime > iterationStartTime;
+  const learningsUpdated = learningsMdTime && learningsMdTime > iterationStartTime;
+
+  if (agentsUpdated || learningsUpdated) {
+    return { required: true, documented: true };
+  }
+
+  return {
+    required: true,
+    documented: false,
+    iterations: iterationData.count,
+    reason: `Story had ${iterationData.count} iterations but no learnings documented`
+  };
+}
+
+function recordLearning(storyId, learning, type = 'pattern') {
+  const timestamp = new Date().toISOString();
+  const iterationData = getStoryIterations(storyId);
+
+  if (type === 'block-pattern') {
+    // Add to LEARNINGS.md
+    if (!fs.existsSync(LEARNINGS_MD_PATH)) {
+      fs.writeFileSync(LEARNINGS_MD_PATH, '# Learnings & Block Patterns\n\n');
+    }
+
+    const content = fs.readFileSync(LEARNINGS_MD_PATH, 'utf8');
+    const newEntry = `\n## BLOCK-PATTERN: BP-AUTO-${Date.now()}\n**Added**: ${timestamp}\n**Story**: ${storyId}\n**Iterations**: ${iterationData.count}\n**Signature**: \`${learning.signature}\`\n**Solution**: ${learning.solution}\n\n`;
+    fs.writeFileSync(LEARNINGS_MD_PATH, content + newEntry);
+    console.log(`✓ Added block pattern to LEARNINGS.md`);
+  } else {
+    // Add to AGENTS.md
+    if (!fs.existsSync(AGENTS_MD_PATH)) {
+      fs.writeFileSync(AGENTS_MD_PATH, '# Agent Learnings\n\n');
+    }
+
+    const content = fs.readFileSync(AGENTS_MD_PATH, 'utf8');
+    const failures = iterationData.failures.map(f => `  - Attempt ${f.attempt}: ${f.reason}`).join('\n');
+    const newEntry = `\n## ${storyId} - ${timestamp}\n**Iterations**: ${iterationData.count}\n**Problem**: ${learning.problem}\n**Solution**: ${learning.solution}\n**Failures**:\n${failures}\n\n`;
+    fs.writeFileSync(AGENTS_MD_PATH, content + newEntry);
+    console.log(`✓ Added learning to AGENTS.md`);
   }
 }
 
@@ -482,11 +561,15 @@ function rollbackToCheckpoint(storyId) {
   }
 }
 
-// v3.0: Run per-story cleanup
+// v3.0: Run per-story cleanup - ENFORCED
 function runCleanup(storyId) {
-  console.log(`=== Running cleanup for ${storyId} ===\n`);
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log(`CLEANUP PHASE: ${storyId}`);
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('');
 
   let hasErrors = false;
+  let hasWarnings = false;
 
   // Step 1: Run ESLint --fix
   console.log('Step 1: Running ESLint --fix...');
@@ -497,11 +580,24 @@ function runCleanup(storyId) {
     });
     console.log('  ✓ ESLint completed');
   } catch (e) {
-    console.log('  ⚠ ESLint had warnings (continuing)');
+    console.log('  ⚠ ESLint had issues (continuing)');
+    hasWarnings = true;
   }
 
-  // Step 2: Run TypeScript check
-  console.log('Step 2: Running TypeScript check...');
+  // Step 2: Run Prettier (if available)
+  console.log('Step 2: Running Prettier...');
+  try {
+    execSync('npx prettier --write "app/**/*.{ts,tsx}" "lib/**/*.{ts,tsx}" "components/**/*.{ts,tsx}" 2>&1 || true', {
+      encoding: 'utf8',
+      stdio: 'pipe'
+    });
+    console.log('  ✓ Prettier completed');
+  } catch (e) {
+    console.log('  ⚠ Prettier not available (skipping)');
+  }
+
+  // Step 3: Run TypeScript check
+  console.log('Step 3: Running TypeScript check...');
   try {
     execSync('npx tsc --noEmit', { stdio: 'pipe' });
     console.log('  ✓ TypeScript check passed');
@@ -510,8 +606,8 @@ function runCleanup(storyId) {
     hasErrors = true;
   }
 
-  // Step 3: Check for mock patterns
-  console.log('Step 3: Checking for mock patterns...');
+  // Step 4: Check for mock patterns
+  console.log('Step 4: Checking for mock patterns...');
   const mockPatterns = scanForMockPatterns();
   if (mockPatterns.length > 0) {
     console.log(`  ⚠ Found ${mockPatterns.length} possible mock patterns`);
@@ -519,18 +615,33 @@ function runCleanup(storyId) {
     if (mockPatterns.length > 3) {
       console.log(`    ... and ${mockPatterns.length - 3} more`);
     }
+    hasWarnings = true;
   } else {
     console.log('  ✓ No mock patterns found');
   }
 
+  // Step 5: Code-simplifier reminder
+  console.log('Step 5: Code simplification...');
+  console.log('  ℹ Run code-simplifier subagent for deeper refactoring:');
+  console.log('    Task({ subagent_type: "code-simplifier", prompt: "Simplify code for ' + storyId + '" })');
+
   // Create cleanup checkpoint if no critical errors
+  console.log('');
   if (!hasErrors) {
     const checkpointPath = path.join(CHECKPOINTS_DIR, `${storyId}_cleanup_complete`);
     fs.mkdirSync(CHECKPOINTS_DIR, { recursive: true });
     fs.writeFileSync(checkpointPath, `PASS\n${new Date().toISOString()}`);
-    console.log(`\n✓ Cleanup checkpoint created: ${storyId}_cleanup_complete`);
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('✓ CLEANUP COMPLETE');
+    if (hasWarnings) {
+      console.log('  (with warnings - review recommended)');
+    }
+    console.log(`✓ Checkpoint created: ${storyId}_cleanup_complete`);
+    console.log('═══════════════════════════════════════════════════════════');
   } else {
-    console.log(`\n✗ Cleanup failed - fix TypeScript errors first`);
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('✗ CLEANUP FAILED - Fix TypeScript errors first');
+    console.log('═══════════════════════════════════════════════════════════');
     process.exit(EXIT_BLOCK);
   }
 
@@ -1255,6 +1366,35 @@ function markStoryPass(storyId) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // LAYER 5: Verify learnings documented (if iterations > threshold) - ENFORCED
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('');
+  console.log('[Layer 5] Checking learnings documentation...');
+
+  const learningsCheck = checkLearningsDocumented(storyId);
+
+  if (learningsCheck.required && !learningsCheck.documented) {
+    console.log(`  ✗ BLOCKED: Learnings not documented`);
+    console.log(`    ${learningsCheck.reason}`);
+    console.log('');
+    console.log('  This story required multiple iterations to complete.');
+    console.log('  You MUST document what you learned before marking it as passed.');
+    console.log('');
+    console.log('  Options:');
+    console.log('    1. Update scripts/ralph/AGENTS.md with the problem and solution');
+    console.log('    2. Add a block pattern to scripts/ralph/LEARNINGS.md');
+    console.log('    3. Run: node ralph-guard.js add-learning <story-id> "problem" "solution"');
+    console.log('');
+    process.exit(EXIT_BLOCK);
+  }
+
+  if (learningsCheck.required) {
+    console.log(`  ✓ Learnings documented (${learningsCheck.iterations || 'N/A'} iterations)`);
+  } else {
+    console.log('  ✓ No learnings required (≤ 2 iterations)');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // ALL LAYERS PASSED - Mark story as complete
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('');
@@ -1541,6 +1681,54 @@ switch (action) {
     }
     break;
 
+  case 'add-learning':
+    {
+      const storyId = args[1];
+      const problem = args[2];
+      const solution = args[3];
+      if (!storyId || !problem || !solution) {
+        console.log('Usage: node ralph-guard.js add-learning <story-id> "<problem>" "<solution>"');
+        console.log('Example: node ralph-guard.js add-learning US-005 "Button selector wrong" "Use data-testid instead"');
+        process.exit(1);
+      }
+      recordLearning(storyId, { problem, solution }, 'pattern');
+      console.log(`Learning documented for ${storyId}`);
+      process.exit(0);
+    }
+    break;
+
+  case 'add-block-pattern':
+    {
+      const storyId = args[1];
+      const signature = args[2];
+      const solution = args[3];
+      if (!storyId || !signature || !solution) {
+        console.log('Usage: node ralph-guard.js add-block-pattern <story-id> "<regex-signature>" "<solution>"');
+        console.log('Example: node ralph-guard.js add-block-pattern US-005 "mock\\s*=" "Use real data"');
+        process.exit(1);
+      }
+      recordLearning(storyId, { signature, solution }, 'block-pattern');
+      console.log(`Block pattern added for ${storyId}`);
+      process.exit(0);
+    }
+    break;
+
+  case 'check-learnings':
+    {
+      const storyId = args[1] || getCurrentStory();
+      if (!storyId) {
+        console.log('Usage: node ralph-guard.js check-learnings <story-id>');
+        process.exit(1);
+      }
+      const result = checkLearningsDocumented(storyId);
+      console.log(`Story: ${storyId}`);
+      console.log(`Learnings required: ${result.required ? 'YES' : 'NO'}`);
+      console.log(`Learnings documented: ${result.documented ? 'YES' : 'NO'}`);
+      if (result.reason) console.log(`Reason: ${result.reason}`);
+      process.exit(result.documented ? 0 : EXIT_BLOCK);
+    }
+    break;
+
   case 'version':
     console.log(`Ralph Guard v${VERSION}`);
     process.exit(0);
@@ -1580,6 +1768,10 @@ switch (action) {
     console.log('  record-iteration <id> <reason>  Record a failed iteration');
     console.log('  check-iterations <id>    Check iteration count for story');
     console.log('  clear-iterations <id>    Reset iteration count for story');
+    console.log('\nLearnings Enforcement (ENFORCED after >2 iterations):');
+    console.log('  add-learning <id> "<problem>" "<solution>"   Document a learning');
+    console.log('  add-block-pattern <id> "<regex>" "<fix>"     Add block pattern');
+    console.log('  check-learnings <id>     Check if learnings documented');
     console.log('');
     console.log('Exit Codes:');
     console.log('  0 = Success');
