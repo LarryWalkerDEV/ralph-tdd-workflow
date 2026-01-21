@@ -4,6 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## ⚠️ MANDATORY: Read Before EVERY Story
+
+**Before starting ANY story, you MUST read these files:**
+
+```
+1. scripts/ralph/AGENTS.md    ← Learned patterns & solutions from past failures
+2. scripts/ralph/LEARNINGS.md ← Block patterns that WILL fail if used
+3. scripts/ralph/prd.json     ← Current story requirements
+```
+
+**Why?** These files contain knowledge from previous iterations. Skipping them means repeating mistakes that were already solved.
+
+---
+
+## Autonomous Workflow
+
+**Ralph runs autonomously.** Claude executes the full TDD loop without human intervention:
+
+```
+FOR EACH story:
+  1. READ AGENTS.md + LEARNINGS.md (MANDATORY)
+  2. set-story → creates git checkpoint
+  3. test-write phase → tdd-test-scaffolder writes tests
+  4. build phase → tdd-implementer makes tests pass
+  5. validate phase → 3 validators in parallel
+  6. IF validation fails:
+     → record-iteration (auto-triggers conflict-resolver at 5)
+     → loop back to build phase
+  7. IF validation passes:
+     → cleanup (lint, prettier, typecheck)
+     → add-learning (if iterations > 2) ← AUTO-ENFORCED
+     → mark-story-pass
+  8. NEXT story
+```
+
+**All commands are invoked by Claude automatically, not by humans.**
+
+---
+
 ## Repository Overview
 
 This repository contains the **Ralph TDD Workflow v3.0** - an enforced Test-Driven Development framework for Claude Code. It includes:
@@ -471,30 +510,55 @@ node .claude/hooks/ralph-guard.js rollback US-XXX
 
 ---
 
-## Iteration Loop (v3.0) - With Auto Conflict-Resolver
+## Iteration Loop (v3.0) - FULLY AUTONOMOUS
+
+**Claude executes this entire loop automatically without human input:**
 
 ```
-attempts = 0
-while (not validated && attempts < 5):
-    run playwright-test-validator  \
-    run form-component-validator    > parallel
-    run whitebox-validator         /
+# STEP 0: READ KNOWLEDGE BASE (MANDATORY - before each story)
+Read(scripts/ralph/AGENTS.md)      ← Past solutions
+Read(scripts/ralph/LEARNINGS.md)   ← Block patterns
+Read(scripts/ralph/prd.json)       ← Story requirements
 
-    if (all PASS):
-        run cleanup
-        validated = true
-    else:
-        # RECORD ITERATION (triggers auto conflict-resolver at 5)
-        node ralph-guard.js record-iteration US-XXX "reason"
+# STEP 1: SET STORY
+Bash: node ralph-guard.js set-story US-XXX
 
-        if (exit code == 3):  # MAX_ITERATIONS_REACHED
-            # Auto-generated: scripts/ralph/conflicts/CONFLICT-US-XXX.md
-            # MUST invoke conflict-resolver before continuing
-            STOP and invoke conflict-resolver
-        else:
-            run tdd-implementer with failure details
-            attempts++
+# STEP 2: WRITE TESTS (Red phase)
+Bash: node ralph-guard.js set-phase test-write
+Task: tdd-test-scaffolder → writes failing tests
+Bash: node ralph-guard.js create-checkpoint tests_written PASS
+
+# STEP 3: IMPLEMENT (Green phase)
+Bash: node ralph-guard.js set-phase build
+Task: tdd-implementer → makes tests pass
+Bash: node ralph-guard.js create-checkpoint build_complete PASS
+
+# STEP 4: VALIDATE (3 validators in parallel)
+Bash: node ralph-guard.js set-phase validate
+Task: playwright-test-validator  ─┐
+Task: form-component-validator   ─┼─ parallel
+Task: whitebox-validator         ─┘
+
+# STEP 5: CHECK RESULTS
+IF all validators PASS:
+    Bash: node ralph-guard.js cleanup US-XXX
+    IF iterations > 2:
+        Bash: node ralph-guard.js add-learning US-XXX "problem" "solution"
+    Bash: node ralph-guard.js mark-story-pass US-XXX
+    GOTO next story
+
+ELSE (validation failed):
+    Bash: node ralph-guard.js record-iteration US-XXX "failure reason"
+
+    IF exit code == 3:  # MAX_ITERATIONS (5)
+        Task: conflict-resolver → diagnose issue
+        Bash: node ralph-guard.js clear-iterations US-XXX
+        GOTO STEP 3 with conflict-resolver's recommendations
+    ELSE:
+        GOTO STEP 3 with failure details
 ```
+
+**Key: Claude invokes ALL Bash and Task commands automatically.**
 
 ### Automatic Conflict-Resolver Trigger
 
