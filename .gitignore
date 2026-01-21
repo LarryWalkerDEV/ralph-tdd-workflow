@@ -19,7 +19,28 @@ tools/agent-browser/dist/
 .claude/checkpoints/
 .claude/current_story
 .claude/current_phase
+.claude/workflow_phase
 .claude/workflow_active
+
+# Development-only (not needed in target projects - but tracked in ralph-loop repo)
+# CLAUDE.md - tracked (project documentation)
+# e2e/ - tracked (test templates)
+# scripts/ralph/ - tracked (workflow configuration)
+start-ralph.txt
+
+# Runtime state (not tracked)
+.claude/checkpoints/
+.claude/validator-results/
+.claude/coverage/
+.claude/session/
+.claude/audit/
+.claude/git_checkpoints.json
+.claude/planning_checkpoints/
+.claude/planning_mode
+
+# Skills and agents - TRACKED (core framework files)
+# .claude/skills/ - tracked
+# .claude/agents/ - tracked
 
 # OS files
 .DS_Store
@@ -35,6 +56,14 @@ Thumbs.db
 test-results/
 playwright-report/
 verification/
+
+# Next.js
+/.next/
+/out/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
 
 # Keep agent-browser binary
 !tools/agent-browser/bin/
